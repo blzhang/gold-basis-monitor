@@ -2,14 +2,18 @@
 Description=Futu OpenD quote gateway (gold monitor)
 After=network-online.target
 Wants=network-online.target
+# 熔断：登录失败即退出，配合 Restart=always + 短 RestartSec 会在数分钟内
+# 烧光富途账号的 10 次锁定额度。必须限制重启频率。
+StartLimitIntervalSec=900
+StartLimitBurst=3
 
 [Service]
 Type=simple
 WorkingDirectory=/opt/goldmon/opend/FutuOpenD
 ExecStart=/opt/goldmon/opend/FutuOpenD/FutuOpenD -console=1 -no_monitor=1 \
   -login_account=YOUR_FUTU_ACCOUNT -login_by_remember=1 -login_region=hk
-Restart=always
-RestartSec=20
+Restart=on-failure
+RestartSec=60
 StandardOutput=append:/opt/goldmon/opend/logs/opend.out.log
 StandardError=append:/opt/goldmon/opend/logs/opend.err.log
 
