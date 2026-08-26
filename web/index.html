@@ -24,8 +24,8 @@ h1{font-size:21px;margin:0 0 4px;font-weight:650;letter-spacing:-.2px}
 .live.flash{opacity:.25}
 .bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:14px 0 4px}
 .seg{display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden;background:var(--panel)}
-.seg button{border:0;background:transparent;color:var(--dim);padding:6px 13px;font-size:12.5px;
- cursor:pointer;font-family:inherit;border-right:1px solid var(--line)}
+.seg button{border:0;background:transparent;color:var(--dim);padding:12px 15px;font-size:12.5px;
+ cursor:pointer;font-family:inherit;border-right:1px solid var(--line);min-height:44px}
 .seg button:last-child{border-right:0}
 .seg button.on{background:var(--gold);color:#fff;font-weight:600}
 .barlab{color:var(--dim);font-size:12px;margin-right:2px}
@@ -38,11 +38,11 @@ h1{font-size:21px;margin:0 0 4px;font-weight:650;letter-spacing:-.2px}
 h2{font-size:15px;margin:26px 0 4px;font-weight:600}
 h2 .hint{font-weight:400;color:var(--dim);font-size:12.5px;margin-left:8px}
 .panel{position:relative;background:var(--panel);border:1px solid var(--line);
- border-radius:8px;padding:10px 4px 4px;margin-top:8px;overflow-x:auto}
-svg{display:block;width:100%;height:auto;min-width:560px}
+ border-radius:8px;padding:10px 4px 4px;margin-top:8px;overflow:hidden}
+svg{display:block;width:100%;height:auto}
 .legend{display:flex;flex-wrap:wrap;gap:13px;padding:3px 10px 7px;font-size:12px;color:var(--dim)}
 .legend i{display:inline-block;width:15px;height:2.5px;vertical-align:middle;margin-right:5px;border-radius:2px}
-.legend span{cursor:pointer;user-select:none}
+.legend span{cursor:pointer;user-select:none;padding:7px 2px;display:inline-flex;align-items:center;min-height:36px;-webkit-tap-highlight-color:transparent}
 .legend span.off{opacity:.32;text-decoration:line-through}
 .tip{position:absolute;pointer-events:none;z-index:9;background:var(--tipbg);border:1px solid var(--line);
  border-radius:7px;padding:7px 10px;font-size:12px;box-shadow:0 4px 16px rgba(0,0,0,.16);
@@ -57,6 +57,18 @@ th,td{padding:8px 11px;text-align:right;border-bottom:1px solid var(--line)}
 th:first-child,td:first-child{text-align:left}
 th{background:rgba(184,134,11,.07);color:var(--dim);font-weight:600;font-size:12px}
 tr:last-child td{border-bottom:none}
+@media (max-width:480px){
+  .wrap{padding:16px 12px 48px}
+  h1{font-size:19px}
+  .cards{grid-template-columns:repeat(2,1fr);gap:8px}
+  .card .v{font-size:17px}
+  th,td{padding:8px 6px;font-size:12px}
+  th.opt,td.opt{display:none}            /* 窄屏隐藏 |max| 列，min/max 已覆盖该信息 */
+  .bar{gap:6px}
+  .barlab{width:100%;margin:2px 0 0}
+  h2{font-size:14.5px}
+  h2 .hint{display:block;margin:2px 0 0;font-size:12px}
+}
 footer{margin-top:32px;padding-top:14px;border-top:1px solid var(--line);color:var(--dim);font-size:12.5px}
 footer ol{padding-left:20px;margin:6px 0}footer li{margin:3px 0}
 .err{padding:36px;text-align:center;color:var(--dim)}
@@ -109,11 +121,23 @@ const md=s=>{const d=new Date((s+HK)*1000);return (d.getUTCMonth()+1)+'/'+d.getU
 const mdhm=s=>md(s)+' '+hm(s);
 const sgn=v=>v>0?'+':'';
 const cls=v=>v>0?'pos':(v<0?'neg':'');
-const ST={basis:'b',range:'recent',recent:null,long:null};
+const ST={basis:'b',range:'recent',recent:null,long:null,latest:null,hidden:{},at:{}};
+let _tipClosers=[];
+const hideAllTips=()=>{_tipClosers.forEach(f=>{try{f()}catch(e){}})};
+// 触屏无 mouseleave：点到图表之外时收起 tooltip
+document.addEventListener('touchstart',e=>{
+  if(!(e.target.closest&&e.target.closest('.panel')))hideAllTips();},{passive:true});
+// 旋屏/改窗宽必须重绘：viewBox 宽度取自容器宽度
+let _rz;addEventListener('resize',()=>{clearTimeout(_rz);
+  _rz=setTimeout(()=>{if(ST[ST.range])render()},220)});
 
 /* ---------- 通用折线图（含 hover 十字线与 tooltip） ---------- */
 function drawChart(host,cfg){
-  const W=1000,H=cfg.h||270,ML=56,MR=16,MT=14,MB=28;
+  // viewBox 宽度取容器实际 CSS 宽度：若固定 1000 宽再缩放，手机上 10.5px 字会变成 3.6px
+  const CW=Math.max(260,(host.clientWidth||360)-8), narrow=CW<480;
+  const W=CW,H=cfg.h||(narrow?190:270);
+  const ML=narrow?38:56,MR=narrow?10:16,MT=12,MB=narrow?22:28;
+  const FS=narrow?10:10.5;
   const t=cfg.t,n=t.length,iw=W-ML-MR,ih=H-MT-MB;
   const vis=cfg.lines.filter(L=>!L.hidden);
   let lo=Infinity,hi=-Infinity;
@@ -127,15 +151,18 @@ function drawChart(host,cfg){
   const t0=t[0], tN=t[n-1], span=(tN-t0)||1;
   const X=i=>ML+(n<2?iw/2:(t[i]-t0)/span*iw), Y=v=>MT+ih-(v-lo)/(hi-lo)*ih;
 
-  let g='',NT=5;
+  let g='',NT=narrow?4:5;
   for(let i=0;i<=NT;i++){const v=lo+(hi-lo)*i/NT,y=Y(v);
     g+=`<line x1="${ML}" y1="${y}" x2="${W-MR}" y2="${y}" stroke="var(--grid)"/>`
-      +`<text x="${ML-7}" y="${y+3.5}" text-anchor="end" font-size="10.5" fill="var(--dim)">${v.toFixed(cfg.dec??0)}</text>`}
+      +`<text x="${ML-5}" y="${y+3.5}" text-anchor="end" font-size="${FS}" fill="var(--dim)">${v.toFixed(cfg.dec??0)}</text>`}
   if(cfg.zero&&lo<0&&hi>0){const y=Y(0);
     g+=`<line x1="${ML}" y1="${y}" x2="${W-MR}" y2="${y}" stroke="var(--dim)" stroke-width="1.2" stroke-dasharray="4 3" opacity=".6"/>`}
-  const lab=cfg.long?mdhm:hm, NX=Math.min(8,Math.max(2,n-1));
+  const lab=cfg.long?mdhm:hm;
+  const NXmax=narrow?(cfg.long?2:3):8;
+  const NX=Math.min(NXmax,Math.max(1,n-1));
   for(let j=0;j<=NX;j++){const tt=t0+span*j/NX, x=ML+j/NX*iw;
-    g+=`<text x="${x}" y="${H-8}" text-anchor="middle" font-size="10.5" fill="var(--dim)">${lab(tt)}</text>`;}
+    const anc=j===0?'start':(j===NX?'end':'middle');
+    g+=`<text x="${x}" y="${H-7}" text-anchor="${anc}" font-size="${FS}" fill="var(--dim)">${lab(tt)}</text>`;}
 
   cfg.lines.forEach((L,li)=>{
     if(L.area){const b=cfg.lines[li+1];
@@ -179,26 +206,37 @@ function drawChart(host,cfg){
       .map(L=>`<div class="tr"><i style="background:${L.c}"></i>${L.name}<b>${sgn(L.v[i])}${L.v[i].toFixed(cfg.tdec??cfg.dec??1)}${cfg.unit||''}</b></div>`).join('');
     tip.innerHTML=`<div class="tt">${cfg.long?mdhm(t[i]):hms(t[i])} HKT</div>`+rows;
     tip.style.display='block';
-    const hr=host.getBoundingClientRect(), tw=tip.offsetWidth;
-    let left=px/W*svg.getBoundingClientRect().width+14;
-    if(left+tw>hr.width-8)left=left-tw-28;
-    tip.style.left=Math.max(4,left)+'px';
-    tip.style.top='16px';
+    const hostW=host.clientWidth, tw=tip.offsetWidth;
+    let left=px+4+12;                       // px 为 viewBox 坐标(=CSS px)，svg 左内边距 4
+    if(left+tw>hostW-6)left=px+4-tw-12;     // 右侧空间不够则翻到左边
+    left=Math.max(4,Math.min(left,hostW-tw-4));
+    tip.style.left=left+'px';
+    tip.style.top='14px';
   }
   const cap=svg.querySelector('#cap');
+  const hide=()=>{hv.style.display='none';tip.style.display='none'};
   cap.addEventListener('mousemove',show);
-  cap.addEventListener('touchmove',e=>{show(e);e.preventDefault()},{passive:false});
-  cap.addEventListener('touchstart',show,{passive:true});
-  host.addEventListener('mouseleave',()=>{hv.style.display='none';tip.style.display='none'});
+  // 按手势主方向分流：纵向为主时放行给页面滚动，否则手指落在图上整页就翻不动
+  let _t0=null;
+  cap.addEventListener('touchstart',e=>{
+    const t=e.touches[0]; _t0=[t.clientX,t.clientY]; show(e);},{passive:true});
+  cap.addEventListener('touchmove',e=>{
+    const t=e.touches[0];
+    if(_t0&&Math.abs(t.clientY-_t0[1])>Math.abs(t.clientX-_t0[0]))return;  // 纵向：放行
+    show(e); e.preventDefault();},{passive:false});
+  cap.addEventListener('touchend',()=>{_t0=null},{passive:true});
+  host.onmouseleave=hide;                  // 赋值：addEventListener 绑在 host 上不随 innerHTML 清除，会累积
+  _tipClosers.push(hide);
 
   if(cfg.legend!==false){
     const lg=document.createElement('div');lg.className='legend';
     lg.innerHTML=cfg.lines.filter(L=>L.name).map(L=>
       `<span data-i="${cfg.lines.indexOf(L)}" class="${L.hidden?'off':''}"><i style="background:${L.c}"></i>${L.name}</span>`).join('');
-    lg.onclick=e=>{const s=e.target.closest('span');if(!s)return;
-      s.classList.toggle('off');
-      const L=cfg.lines[+s.dataset.i]; L.hidden=s.classList.contains('off');
-      const keep=host.scrollLeft; drawChart(host,cfg); host.scrollLeft=keep;};
+    lg.onclick=e=>{const sp=e.target.closest('span');if(!sp)return;
+      sp.classList.toggle('off');
+      const L=cfg.lines[+sp.dataset.i]; L.hidden=sp.classList.contains('off');
+      if(cfg.id){(ST.hidden[cfg.id]=ST.hidden[cfg.id]||{})[L.name]=L.hidden;}
+      drawChart(host,cfg);};
     host.appendChild(lg);
   }
 }
@@ -209,13 +247,17 @@ function card(k,v,d){return `<div class="card"><div class="k">${k}</div><div cla
 function render(){
   const D=ST[ST.range]; if(!D){document.getElementById('app').innerHTML='<div class="err">暂无数据</div>';return}
   // 卡片是"当前状态"，永远取 15 秒分辨率的 recent，不随查看范围退化成 5 分钟
-  const LIVE=ST.recent||D;
+  const LIVE=ST.latest||ST.recent||D;
   const L=LIVE.latest||{},lab=D.labels||{},app=document.getElementById('app');
   const B=ST.basis, isB=B==='b';
   document.getElementById('upd').textContent=mdhm(LIVE.updated)+' HKT';
   document.getElementById('freq').textContent='15 秒';
   const live=document.getElementById('live');
-  live.className='live'+((Date.now()/1000-LIVE.updated>90)?' stale':'');
+  // 判据用最后一个数据点的时间而非 exporter 写入时间：
+  // 否则采集器死了、exporter 还在空转，灯依然是绿的
+  const dataTs=(L.ts||LIVE.updated), age=Date.now()/1000-dataTs;
+  live.className='live'+((age>90||!ST.at.ok||Date.now()-ST.at.ok>90000)?' stale':'');
+  live.title='最新数据点 '+hms(dataTs)+' HKT（'+Math.round(age)+' 秒前）';
 
   let c=card('Pyth XAU/USD','$'+(L.pyth_xauusd??0).toFixed(2),
       isB?{t:sgn(L.b_pyth_xauusd)+(L.b_pyth_xauusd??0)+' bps vs 3030',c:cls(L.b_pyth_xauusd)}:{t:'基准 · 实时'});
@@ -237,14 +279,16 @@ function render(){
   app.innerHTML=`<div class="cards">${c}</div>
     <h2>${title}<span class="hint">${hint}</span></h2><div class="panel" id="c1"></div>
     <h2>Chainlink 报价陈旧度<span class="hint">分钟 · 锯齿峰值 = 锚它做报价的套利打击面</span></h2><div class="panel" id="c2"></div>
-    <h2>3030.HK 盘口<span class="hint">HKD · 阴影为买卖价差区间</span></h2><div class="panel" id="c3"></div>
+    <h2>3030.HK 盘口<span class="hint">HKD · 阴影为买卖价差区间 · 仅港股交易时段，午休与收市断开</span></h2><div class="panel" id="c3"></div>
     <h2>基差统计<span class="hint">样本 ${D.n_slots} 点 · ${D.full_res?'15 秒':'5 分钟'}分辨率</span></h2><div id="tb"></div>`;
 
+  _tipClosers=[];                     // 图表已重建，旧的关闭器失效
   const src=D[B]||{}, lines=[];
   for(const key in src){const m=lab[key]||[key,'#888'];
     lines.push({name:m[0],c:m[1],v:src[key]})}
   const isLong=!D.full_res;
-  drawChart(document.getElementById('c1'),{t:D.t,lines,zero:true,h:300,dec:1,tdec:1,unit:'',long:isLong});
+  const hid=ST.hidden.c1||{}; lines.forEach(L=>{L.hidden=!!hid[L.name]});
+  drawChart(document.getElementById('c1'),{id:'c1',t:D.t,lines,zero:true,h:300,dec:1,tdec:1,unit:'',long:isLong});
 
   if(D.cl_age)drawChart(document.getElementById('c2'),
     {t:D.t,lines:[{name:'陈旧',c:'#e0533d',v:D.cl_age.map(v=>v==null?null:+(v/60).toFixed(1))}],
@@ -258,26 +302,28 @@ function render(){
   const S=(D.stats||{})[B]||{};let rows='';
   for(const k in S){const s=S[k];
     rows+=`<tr><td>${s.label}</td><td class="${cls(s.mean)}">${sgn(s.mean)}${s.mean}</td><td>${s.std}</td>
-      <td class="${cls(s.min)}">${s.min}</td><td class="${cls(s.max)}">${sgn(s.max)}${s.max}</td><td>${s.absmax}</td><td>${s.n}</td></tr>`}
+      <td class="${cls(s.min)}">${s.min}</td><td class="${cls(s.max)}">${sgn(s.max)}${s.max}</td><td class="opt">${s.absmax}</td><td>${s.n}</td></tr>`}
   let note='';
   if(D.cl_stale)note=`<p class="note">Chainlink 陈旧度：均值 ${D.cl_stale.mean_min} 分钟，p95 ${D.cl_stale.p95_min} 分钟，最长 ${D.cl_stale.max_min} 分钟。`
     +(D.ticks?` 3030 盘口变动 ${D.ticks.n} 笔，卖/买深度比中位数 ${D.ticks.depth_ratio_median??'—'}。`:'')+`</p>`;
   document.getElementById('tb').innerHTML=
-    `<table><thead><tr><th>源</th><th>均值</th><th>σ</th><th>最小</th><th>最大</th><th>|max|</th><th>n</th></tr></thead>
+    `<table><thead><tr><th>源</th><th>均值</th><th>σ</th><th>最小</th><th>最大</th><th class="opt">|max|</th><th>n</th></tr></thead>
      <tbody>${rows}</tbody></table>${note}`;
 }
 
 async function fetchData(which){
-  const f=which==='long'?'data_long.json':'data.json';
+  const f=which==='long'?'data_long.json':(which==='latest'?'latest.json':'data.json');
   try{const r=await fetch(f+'?_='+Date.now()); if(!r.ok)throw 0; ST[which]=await r.json(); return true}
   catch(e){return false}
 }
 async function tick(){
-  const ok=await fetchData('recent');            // 卡片始终要最新的
-  if(ST.range==='long'&&(!ST.longAt||Date.now()-ST.longAt>60000)){
-    await fetchData('long'); ST.longAt=Date.now();
-  }
-  if(!ok){if(!ST[ST.range])document.getElementById('app').innerHTML='<div class="err">数据加载失败</div>';return}
+  // 卡片只需最新快照(约1KB)；完整序列 18KB/次，每 15 秒重传一天就是 100MB
+  const ok=await fetchData('latest');
+  if(ok)ST.at.ok=Date.now();
+  const r=ST.range;
+  if(!ST[r]||Date.now()-(ST.at[r]||0)>60000){await fetchData(r); ST.at[r]=Date.now();}
+  if(!ST[r]&&!ok){document.getElementById('app').innerHTML='<div class="err">数据加载失败</div>';return}
+  if(!ST[r])return;
   const l=document.getElementById('live'); l.classList.add('flash'); setTimeout(()=>l.classList.remove('flash'),260);
   render();
 }

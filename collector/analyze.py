@@ -38,23 +38,47 @@ def load(db: str, since: str | None = None) -> tuple[pd.DataFrame, pd.DataFrame,
     ).fetchone()[0]:
         conn.close()
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-    q = "SELECT slot_ts, source, value, age_sec, source_ts, meta, error FROM snapshots"
+    # meta 只在 market_state 一行有用，全量拉会在 14 天窗口下多读上百 MB
+    q = ("SELECT slot_ts, source, value, age_sec, source_ts, error,"
+         " CASE WHEN source='futu_market_state' THEN meta ELSE NULL END AS meta"
+         " FROM snapshots")
     params: list = []
     if since:
         q += " WHERE slot_ts >= ?"
         params.append(int(pd.Timestamp(since, tz="UTC").timestamp()))
     snap = pd.read_sql_query(q, conn, params=params)
-    ticks = pd.read_sql_query("SELECT ts, bid, ask, bid_vol, ask_vol FROM book_ticks", conn)
+    if params:
+        ticks = pd.read_sql_query(
+            "SELECT ts, bid, ask, bid_vol, ask_vol FROM book_ticks WHERE ts >= ?",
+            conn, params=params)          # 与 snapshots 同窗口，并让 ix_tick_ts 生效
+    else:
+        ticks = pd.read_sql_query("SELECT ts, bid, ask, bid_vol, ask_vol FROM book_ticks", conn)
     conn.close()
     if snap.empty:
         return snap, pd.DataFrame(), ticks
 
     ok = snap[snap.error.isna() & snap.value.notna()]
     wide = ok.pivot_table(index="slot_ts", columns="source", values="value", aggfunc="last")
-    age = ok.pivot_table(index="slot_ts", columns="source", values="age_sec", aggfunc="last")
-    sts = ok.pivot_table(index="slot_ts", columns="source", values="source_ts", aggfunc="last")
-    wide.index = pd.to_datetime(wide.index, unit="s", utc=True).tz_convert(HKT)
-    age.index = sts.index = wide.index
+    # pivot_table 会丢弃整行全 NaN 的 slot：若某 slot 内所有源的 age_sec 都为 NULL，
+    # age 的行数就比 wide 少，按位置赋值 index 会抛 ValueError 并让 exporter 永久卡死。
+    # 必须 reindex 对齐，不能靠位置。
+    idx = wide.index
+    age = ok.pivot_table(index="slot_ts", columns="source",
+                         values="age_sec", aggfunc="last").reindex(idx)
+    sts = ok.pivot_table(index="slot_ts", columns="source",
+                         values="source_ts", aggfunc="last").reindex(idx)
+    hk_idx = pd.to_datetime(idx, unit="s", utc=True).tz_convert(HKT)
+    wide.index = age.index = sts.index = hk_idx
+
+    # market_state 的 value 为 NULL（状态存在 meta 里），不会通过上面 value.notna() 的过滤，
+    # 必须单独解析 —— 否则交易时段过滤永远不会生效。
+    ms = snap[(snap.source == "futu_market_state") & snap.error.isna()]
+    if len(ms):
+        st = ms.drop_duplicates("slot_ts", keep="last").set_index("slot_ts")["meta"]
+        st = st.map(lambda m: (json.loads(m).get("market_hk") if m else None))
+        st.index = pd.to_datetime(st.index, unit="s", utc=True).tz_convert(HKT)
+        wide["market_hk"] = st.reindex(wide.index)
+
     return snap, pd.concat([wide, age.add_suffix("__age"), sts.add_suffix("__srcts")], axis=1), ticks
 
 
@@ -87,6 +111,22 @@ def derive(w: pd.DataFrame, k_fixed: float | None = None) -> tuple[pd.DataFrame,
     mid("binance_paxg_spot_bid", "binance_paxg_spot_ask", "binance_paxg_spot_mid")
     mid("binance_xaut_spot_bid", "binance_xaut_spot_ask", "binance_xaut_spot_mid")
     mid("futu_3030_bid", "futu_3030_ask", "mid_3030_hkd")
+
+    # 非交易时段的 3030 盘口是僵尸报价：实测午休 240 个采样点里 mid 只有 2 个不同值，
+    # spread 却宽到 49.9bps（交易时段 28.5）。放任不管会把基差 σ 从 3.07 夸大到 9.14（+198%）。
+    # 用富途 market_state 过滤（能自动覆盖节假日与临时休市），状态缺失时回退到 HKT 时段判断。
+    if "market_hk" in w.columns and w["market_hk"].notna().any():
+        st = w["market_hk"].ffill()
+        open_mask = st.isin(["MORNING", "AFTERNOON"])
+        gap = st.isna()
+        if gap.any():
+            open_mask = open_mask | (gap & hk_session(w.index))
+    else:
+        open_mask = hk_session(w.index)
+    w["hk_open"] = open_mask
+    for c in ("futu_3030_bid", "futu_3030_ask", "mid_3030_hkd"):
+        if c in w.columns:
+            w.loc[~open_mask, c] = np.nan
 
     if {"futu_3030_bid", "futu_3030_ask"} <= set(w.columns):
         w["spread_3030_bps"] = (w.futu_3030_ask - w.futu_3030_bid) / w.mid_3030_hkd * 1e4

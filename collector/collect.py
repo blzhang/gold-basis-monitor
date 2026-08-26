@@ -24,6 +24,7 @@ _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.environ.get("GOLDMON_DB", os.path.join(_REPO, "data", "goldmon.db"))
 SLOT_SEC = 15           # 主采样周期
 ROUND_BUDGET = 12       # 单轮采集超时预算（秒）
+RETAIN_DAYS = 90        # 数据保留天数：15 秒采样每天约 7.5 万行，无上限会持续吃盘
 CODE = "HK.03030"
 
 # 分层采样：瓶颈不是限频（Binance 15s 采样仅用限额的 0.13%），
@@ -102,6 +103,16 @@ def write_readings(conn: sqlite3.Connection, slot_ts: int, readings: list[S.Read
     conn.commit()
 
 
+def prune(conn: sqlite3.Connection) -> None:
+    """删除超出保留期的数据。每天调用一次即可。"""
+    cut = time.time() - RETAIN_DAYS * 86400
+    a = conn.execute("DELETE FROM snapshots WHERE slot_ts < ?", (int(cut),)).rowcount
+    b = conn.execute("DELETE FROM book_ticks WHERE ts < ?", (cut,)).rowcount
+    conn.commit()
+    if a or b:
+        log(f"[prune] 清理 {a} 条 snapshots, {b} 条 book_ticks (保留 {RETAIN_DAYS} 天)")
+
+
 # ------------------------------------------------------- 3030 盘口旁录
 
 class BookRecorder:
@@ -138,8 +149,33 @@ class BookRecorder:
             log(f"[book] handler error: {type(e).__name__}: {e}")
 
 
-def make_futu_ctx(recorder: BookRecorder):
-    """建立富途连接并挂上盘口推送。失败返回 None，不阻塞其余数据源。"""
+def make_futu_ctx(recorder: BookRecorder, timeout: float = 8.0):
+    """建立富途连接并挂上盘口推送。失败或超时返回 None，绝不阻塞其余数据源。
+
+    OpenQuoteContext 的构造是同步阻塞的：OpenD 进程在但不响应时它可以挂很久，
+    会把整个主循环连同 24×7 的加密源一起拖停。故放进守护线程并设超时。
+    """
+    box: dict = {}
+
+    def _build():
+        try:
+            box["ctx"] = _connect_futu(recorder)
+        except Exception as e:
+            box["err"] = e
+
+    th = threading.Thread(target=_build, daemon=True, name="futu-connect")
+    th.start()
+    th.join(timeout)
+    if th.is_alive():
+        log(f"[futu] connect timed out after {timeout}s, continuing without 3030")
+        return None
+    if "err" in box:
+        log(f"[futu] connect failed: {type(box['err']).__name__}: {box['err']}")
+        return None
+    return box.get("ctx")
+
+
+def _connect_futu(recorder: BookRecorder):
     try:
         from futu import OpenQuoteContext, OrderBookHandlerBase, SubType, RET_OK
 
@@ -191,14 +227,20 @@ def collect_round(conn, futu_ctx) -> tuple[int, list[S.Reading]]:
     due = [f for f, every in TIERS if rnd % every == 0]
     readings: list[S.Reading] = []
 
-    with ThreadPoolExecutor(max_workers=len(due)) as pool:
+    pool = ThreadPoolExecutor(max_workers=len(due))
+    try:
         futs = {pool.submit(f): f.__name__ for f in due}
-        for fut in as_completed(futs, timeout=ROUND_BUDGET):
-            name = futs[fut]
+        deadline = time.time() + ROUND_BUDGET
+        for fut, name in futs.items():
             try:
-                readings.extend(fut.result())
+                # 逐个取并各自计时：超时的源记 error，其余读数照常入库
+                readings.extend(fut.result(timeout=max(0.05, deadline - time.time())))
             except Exception as e:
-                readings.append(S.Reading(source=name, error=f"timeout/{type(e).__name__}: {e}"))
+                readings.append(S.Reading(
+                    source=name, error=f"timeout/{type(e).__name__}: {str(e)[:120]}"))
+    finally:
+        # wait=False：不等慢线程，否则单个卡死的源会把整轮拖过预算
+        pool.shutdown(wait=False, cancel_futures=True)
 
     if futu_ctx is not None:
         readings.extend(S.fetch_futu_3030(futu_ctx))   # 本地网关，每轮都采
@@ -240,7 +282,8 @@ def main() -> None:
     init_db(conn)
     recorder = BookRecorder(DB_PATH)
     futu_ctx = make_futu_ctx(recorder)
-    log(f"collector started, db={DB_PATH}, slot={SLOT_SEC}s")
+    last_prune = time.time()      # 启动时不清理，避免重启风暴反复扫全表
+    log(f"collector started, db={DB_PATH}, slot={SLOT_SEC}s, retain={RETAIN_DAYS}d")
 
     try:
         while not _stop.is_set():
@@ -255,6 +298,13 @@ def main() -> None:
             # 富途断线则下一轮重连，期间其余数据源照常
             if futu_ctx is None:
                 futu_ctx = make_futu_ctx(recorder)
+
+            if time.time() - last_prune > 86400:
+                try:
+                    prune(conn)
+                except Exception as e:
+                    log(f"[prune] failed: {type(e).__name__}: {e}")
+                last_prune = time.time()
 
             nxt = (time.time() // SLOT_SEC + 1) * SLOT_SEC
             while not _stop.is_set() and time.time() < nxt:

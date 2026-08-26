@@ -64,6 +64,9 @@ def build(w: pd.DataFrame, k, ticks: pd.DataFrame, full: bool) -> dict:
             d["b"][col] = clean(w[f"b_{col}"], 2)
             d["labels"].setdefault(col, [lab, c])
 
+    if "hk_open" in w.columns:
+        d["hk_open"] = [bool(x) if x == x else None for x in w["hk_open"]]
+
     for col, key, nd in [
         (BASE, "pyth", 2), ("chainlink_xauusd__age", "cl_age", 0),
         ("mid_3030_hkd", "mid_3030", 4), ("futu_3030_bid", "bid_3030", 4),
@@ -158,8 +161,22 @@ def run_recent() -> str:
     return f"data {len(recent)}pt/{n//1024}KB"
 
 
+def run_latest() -> str:
+    """只写最新快照（约 1KB）。卡片每 15 秒要它，图表序列则不必这么频繁重传：
+    完整 data.json 约 18KB(gzip)，每 15 秒一次相当于 103MB/天/页面。"""
+    since = (pd.Timestamp.now("UTC") - pd.Timedelta(minutes=30)).strftime("%Y-%m-%d %H:%M:%S")
+    snap, w, ticks = A.load(A.DB_PATH, since)
+    if snap.empty or w.empty:
+        return "no data"
+    w, _ = A.derive(w, k_fixed=_K)
+    full = build(w.tail(2), _K, ticks, True)
+    out = {"updated": full["updated"], "latest": full["latest"], "k": _K}
+    n = write(out, "latest.json")
+    return f"latest {n}B"
+
+
 def run_once() -> str:
-    return run_long() + "  |  " + run_recent()
+    return run_long() + "  |  " + run_recent() + "  |  " + run_latest()
 
 
 def main() -> None:
@@ -171,18 +188,30 @@ def main() -> None:
     if not daemon:
         print(run_once()); return
     print(f"exporter daemon started, every={every}s -> {OUT_DIR}", flush=True)
-    last_long = 0.0
+    last = {"long": 0.0, "recent": 0.0}
+    fails = {"long": 0, "recent": 0}
     while True:
         t0 = time.time()
+        parts = []
+        # 每档独立 try 且无论成败都推进时钟：否则长窗口一旦持续失败，
+        # 会把短窗口和最新快照一起拖死，页面冻结而服务仍显示 active。
+        for key, period, fn in (("long", 300, run_long), ("recent", 60, run_recent)):
+            if t0 - last[key] < period + fails[key] * 60:   # 失败后线性退避
+                continue
+            try:
+                parts.append(fn())
+                fails[key] = 0
+            except Exception as e:
+                fails[key] = min(fails[key] + 1, 5)
+                parts.append(f"{key} ERROR({fails[key]}) {type(e).__name__}: {str(e)[:120]}")
+            finally:
+                last[key] = t0
         try:
-            if t0 - last_long >= 300:      # 长周期文件 5 分钟一次即可
-                msg = run_long()
-                last_long = t0
-            else:
-                msg = run_recent()
+            parts.append(run_latest())         # 最新快照：每轮都写，卡片保持 15 秒实时
         except Exception as e:
-            msg = f"ERROR {type(e).__name__}: {str(e)[:160]}"
-        print(f"{time.strftime('%H:%M:%S', time.gmtime())}Z {msg} ({time.time()-t0:.1f}s)", flush=True)
+            parts.append(f"latest ERROR {type(e).__name__}: {str(e)[:120]}")
+        print(f"{time.strftime('%H:%M:%S', time.gmtime())}Z {'  |  '.join(parts)} "
+              f"({time.time()-t0:.1f}s)", flush=True)
         time.sleep(max(1.0, every - (time.time() - t0)))
 
 
