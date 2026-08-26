@@ -109,6 +109,10 @@ footer ol{padding-left:20px;margin:6px 0}footer li{margin:3px 0}
       慢变量在图上做前向填充，Chainlink 陈旧度按链上 updatedAt 重算，因此锯齿是真实的。</li>
     <li>3030 最小变动 0.005 HKD ≈ <b>7.1 bps</b>（mid 取买卖中价，粒度减半 ≈ <b>3.6 bps</b>），
       价格分辨率与观测目标同量级。</li>
+    <li><b>3030 自己也是低频报价源。</b>实测下午后半段挂单量从 8 万股掉到 1 万股（−87%），
+      报价最长 <b>36 分钟</b>不变、62.5% 的时间钉在同一价位。此时观测到的"基差"有相当部分
+      是它自身的陈旧，而非经济偏离——这与 Chainlink 是同类问题，只是触发机制不同
+      （Chainlink 靠 deviation 阈值，3030 靠有没有人报价）。故陈旧度图把两者画在同一轴上对比。</li>
     <li><b>为什么 3030 基准下曲线是方波：</b>偏离 = 源价 ÷ 3030隐含金价 − 1，分母每跳一档，
       所有曲线同步跳一档。Chainlink 在两次链上更新之间价格是常数，此时红线的起伏
       <b>完全是 3030 的倒影</b>，与 Chainlink 本身无关——它真正动的时刻，是下方陈旧度图垂直归零的那一瞬。
@@ -279,27 +283,40 @@ function render(){
   live.className='live'+((age>90||!ST.at.ok||Date.now()-ST.at.ok>90000)?' stale':'');
   live.title='最新数据点 '+hms(dataTs)+' HKT（'+Math.round(age)+' 秒前）';
 
+  // 港股休市时 latest 里没有任何 b_* 字段，卡片必须回退到 Pyth 基准，否则显示 undefined
+  const has3030=L.mid_3030_hkd!=null;
+  const useB=isB&&has3030;
+  const pick=k=>useB?L['b_'+k]:L['d_'+k];
+  const bps=(v,extra)=>(v==null||!isFinite(v))?{t:(extra||'—')}
+                       :{t:sgn(v)+v+' bps'+(extra?' · '+extra:''),c:cls(v)};
+
   let c=card('Pyth XAU/USD','$'+(L.pyth_xauusd??0).toFixed(2),
-      isB?{t:sgn(L.b_pyth_xauusd)+(L.b_pyth_xauusd??0)+' bps vs 3030',c:cls(L.b_pyth_xauusd)}:{t:'基准 · 实时'});
-  if(L.chainlink_xauusd!=null){const v=isB?L.b_chainlink_xauusd:L.d_chainlink_xauusd;
+      useB?bps(L.b_pyth_xauusd&&L.b_pyth_xauusd,'vs 3030'):{t:'基准 · 实时'});
+  if(L.chainlink_xauusd!=null)
     c+=card('Chainlink','$'+L.chainlink_xauusd.toFixed(2),
-      {t:sgn(v)+v+' bps · 陈旧 '+((L.chainlink_xauusd__age||0)/60).toFixed(0)+' 分',c:cls(v)})}
-  if(L.binance_paxg_perp_mark!=null){const v=isB?L.b_binance_paxg_perp_mark:L.d_binance_paxg_perp_mark;
-    c+=card('PAXG perp','$'+L.binance_paxg_perp_mark.toFixed(2),{t:sgn(v)+v+' bps',c:cls(v)})}
-  if(L.binance_xaut_perp_mark!=null){const v=isB?L.b_binance_xaut_perp_mark:L.d_binance_xaut_perp_mark;
-    c+=card('XAUT perp','$'+L.binance_xaut_perp_mark.toFixed(2),{t:sgn(v)+v+' bps',c:cls(v)})}
-  if(L.mid_3030_hkd!=null)c+=card('3030.HK mid',L.mid_3030_hkd.toFixed(4)+' HKD',
-      {t:'spread '+(L.spread_3030_bps??0).toFixed(1)+' bps'});
-  if(L.implied_3030_usd_oz!=null)c+=card('3030 隐含金价','$'+L.implied_3030_usd_oz.toFixed(2),
-      isB?{t:'基准'}:{t:sgn(L.d_implied_3030_usd_oz)+(L.d_implied_3030_usd_oz??0)+' bps',c:cls(L.d_implied_3030_usd_oz)});
+      bps(pick('chainlink_xauusd'),'陈旧 '+((L.chainlink_xauusd__age||0)/60).toFixed(0)+' 分'));
+  if(L.binance_paxg_perp_mark!=null)
+    c+=card('PAXG perp','$'+L.binance_paxg_perp_mark.toFixed(2),bps(pick('binance_paxg_perp_mark')));
+  if(L.binance_xaut_perp_mark!=null)
+    c+=card('XAUT perp','$'+L.binance_xaut_perp_mark.toFixed(2),bps(pick('binance_xaut_perp_mark')));
+  c+=has3030
+    ? card('3030.HK mid',L.mid_3030_hkd.toFixed(4)+' HKD',
+        {t:'spread '+(L.spread_3030_bps??0).toFixed(1)+' bps'
+           +(L.mid_3030_age!=null?' · 静止 '+(L.mid_3030_age/60).toFixed(0)+' 分':'')})
+    : card('3030.HK mid','—',{t:'港股休市'});
+  if(has3030)
+    c+=card('3030 隐含金价','$'+L.implied_3030_usd_oz.toFixed(2),
+      useB?{t:'基准'}:bps(L.d_implied_3030_usd_oz));
 
   const title=isB?'各源相对 <b>3030.HK</b> 的基差':'各源相对 <b>Pyth</b> 的偏离';
   const hint=(isB?'bps · 底层资产视角，用 perp 对冲的账面净敞口 · <b>曲线上的方波台阶来自 3030 自身 3.6bps 的最小变动，不是各源在跳</b>'
                  :'bps · 现货金市场视角，分母连续，反映各源自身的偏离')+' · 灰带为港股非交易时段';
-  app.innerHTML=`<div class="cards">${c}</div>
+  const fallbackNote=(isB&&!has3030)
+    ?`<p class="note" style="margin:8px 2px 0">港股休市，3030 无实时盘口：<b>上方卡片暂按 Pyth 基准显示</b>；下方图表中 3030 相关曲线在休市段断开。</p>`:'';
+  app.innerHTML=`<div class="cards">${c}</div>${fallbackNote}
     <h2>各源金价绝对水平<span class="hint">USD/oz · 所有源同步跟随金价，曲线之间的垂直距离就是基差</span></h2><div class="panel" id="c0"></div>
     <h2>${title}<span class="hint">${hint}</span></h2><div class="panel" id="c1"></div>
-    <h2>Chainlink 报价陈旧度<span class="hint">分钟 · 锯齿峰值 = 锚它做报价的套利打击面</span></h2><div class="panel" id="c2"></div>
+    <h2>报价陈旧度对比<span class="hint">分钟 · 距上次报价变动多久 · 锯齿峰值 = 锚它做报价的套利打击面</span></h2><div class="panel" id="c2"></div>
     <h2>3030.HK 盘口<span class="hint">HKD · 阴影为买卖价差区间 · 仅港股交易时段，午休与收市断开</span></h2><div class="panel" id="c3"></div>
     <h2>基差统计<span class="hint">样本 ${D.n_slots} 点 · ${D.full_res?'15 秒':'5 分钟'}分辨率</span></h2><div id="tb"></div>`;
 
@@ -328,9 +345,17 @@ function render(){
   drawChart(document.getElementById('c1'),{id:'c1',t:D.t,lines,zero:true,h:300,dec:1,tdec:1,
     unit:'',long:isLong,open:D.hk_open});
 
-  if(D.cl_age)drawChart(document.getElementById('c2'),
-    {t:D.t,lines:[{name:'陈旧',c:'#e0533d',v:D.cl_age.map(v=>v==null?null:+(v/60).toFixed(1))}],
-     h:180,legend:false,dec:0,tdec:1,unit:' 分',min0:true,long:isLong});
+  if(D.cl_age||D.hk_age){
+    const st=[];
+    if(D.cl_age)st.push({name:'Chainlink',c:'#e0533d',
+      v:D.cl_age.map(v=>v==null?null:+(v/60).toFixed(1))});
+    // 3030 在流动性差的时段同样是低频报价源，与 Chainlink 同轴对比才看得出量级
+    if(D.hk_age)st.push({name:'3030.HK 盘口',c:'#5aab6b',
+      v:D.hk_age.map(v=>v==null?null:+(v/60).toFixed(1))});
+    const h2=ST.hidden.c2||{}; st.forEach(L=>{L.hidden=!!h2[L.name]});
+    drawChart(document.getElementById('c2'),{id:'c2',t:D.t,lines:st,
+      h:190,dec:0,tdec:1,unit:' 分',min0:true,long:isLong,open:D.hk_open});
+  }
 
   if(D.bid_3030)drawChart(document.getElementById('c3'),{t:D.t,h:230,dec:3,tdec:4,long:isLong,
     open:D.hk_open,lines:[

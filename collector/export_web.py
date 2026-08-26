@@ -69,6 +69,7 @@ def build(w: pd.DataFrame, k, ticks: pd.DataFrame, full: bool) -> dict:
 
     for col, key, nd in [
         (BASE, "pyth", 2), ("chainlink_xauusd__age", "cl_age", 0),
+        ("mid_3030_age", "hk_age", 0),
         ("mid_3030_hkd", "mid_3030", 4), ("futu_3030_bid", "bid_3030", 4),
         ("futu_3030_ask", "ask_3030", 4), ("spread_3030_bps", "spread_3030", 1),
         ("implied_3030_usd_oz", "implied_3030", 2), ("fx_usdhkd", "fx", 4),
@@ -80,7 +81,8 @@ def build(w: pd.DataFrame, k, ticks: pd.DataFrame, full: bool) -> dict:
     latest = {"ts": int(w.index[-1].timestamp())}
     for col in [BASE, "chainlink_xauusd", "binance_paxg_spot_mid", "binance_paxg_perp_mark",
                 "binance_xaut_spot_mid", "binance_xaut_perp_mark", "mid_3030_hkd",
-                "spread_3030_bps", "fx_usdhkd", "implied_3030_usd_oz", "chainlink_xauusd__age"]:
+                "spread_3030_bps", "fx_usdhkd", "implied_3030_usd_oz", "chainlink_xauusd__age",
+                "mid_3030_age"]:
         if col in w.columns and pd.notna(last.get(col)):
             latest[col] = round(float(last[col]), 4)
     for pre in ("d_", "b_"):
@@ -105,6 +107,12 @@ def build(w: pd.DataFrame, k, ticks: pd.DataFrame, full: bool) -> dict:
                                        "max": round(float(s.max()), 1),
                                        "absmax": round(float(s.abs().max()), 1)}
     d["stats"] = stats
+
+    if "mid_3030_age" in w.columns and w["mid_3030_age"].notna().sum() > 1:
+        ha = w["mid_3030_age"].dropna() / 60
+        d["hk_stale"] = {"mean_min": round(float(ha.mean()), 1),
+                         "p95_min": round(float(ha.quantile(.95)), 1),
+                         "max_min": round(float(ha.max()), 1)}
 
     a = "chainlink_xauusd__age"
     if a in w.columns and w[a].notna().sum() > 1:

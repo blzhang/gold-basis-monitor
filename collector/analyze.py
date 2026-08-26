@@ -141,6 +141,15 @@ def derive(w: pd.DataFrame, k_fixed: float | None = None) -> tuple[pd.DataFrame,
         if k:
             w["implied_3030_usd_oz"] = w.mid_3030_hkd / w.fx_usdhkd / k
 
+    # 3030 报价新鲜度：距上次 mid 变动的秒数，与 Chainlink 的 age 同构。
+    # 薄盘 ETF 在流动性差的时段本身就是低频报价源：实测下午后半段挂单量掉 87%，
+    # 最长 36 分钟不动，此时观测到的"基差"很大一部分是它自己的陈旧。
+    if "mid_3030_hkd" in w.columns:
+        _now = pd.Series(w.index.map(pd.Timestamp.timestamp), index=w.index)
+        m = w["mid_3030_hkd"]
+        changed = m.ne(m.shift()) & m.notna()
+        w["mid_3030_age"] = (_now - _now.where(changed).ffill()).where(m.notna())
+
     if BASE in w.columns:
         for c in CRYPTO + ["implied_3030_usd_oz"]:
             if c in w.columns:
