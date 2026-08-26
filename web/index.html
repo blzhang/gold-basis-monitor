@@ -142,7 +142,7 @@ function drawChart(host,cfg){
   // viewBox 宽度取容器实际 CSS 宽度：若固定 1000 宽再缩放，手机上 10.5px 字会变成 3.6px
   const CW=Math.max(260,(host.clientWidth||360)-8), narrow=CW<480;
   const W=CW,H=cfg.h||(narrow?190:270);
-  const ML=narrow?38:56,MR=narrow?10:16,MT=12,MB=narrow?22:28;
+  const ML=cfg.ml||(narrow?38:56),MR=narrow?10:16,MT=12,MB=narrow?22:28;
   const FS=narrow?10:10.5;
   const t=cfg.t,n=t.length,iw=W-ML-MR,ih=H-MT-MB;
   const vis=cfg.lines.filter(L=>!L.hidden);
@@ -297,16 +297,33 @@ function render(){
   const hint=(isB?'bps · 底层资产视角，用 perp 对冲的账面净敞口 · <b>曲线上的方波台阶来自 3030 自身 3.6bps 的最小变动，不是各源在跳</b>'
                  :'bps · 现货金市场视角，分母连续，反映各源自身的偏离')+' · 灰带为港股非交易时段';
   app.innerHTML=`<div class="cards">${c}</div>
+    <h2>各源金价绝对水平<span class="hint">USD/oz · 所有源同步跟随金价，曲线之间的垂直距离就是基差</span></h2><div class="panel" id="c0"></div>
     <h2>${title}<span class="hint">${hint}</span></h2><div class="panel" id="c1"></div>
     <h2>Chainlink 报价陈旧度<span class="hint">分钟 · 锯齿峰值 = 锚它做报价的套利打击面</span></h2><div class="panel" id="c2"></div>
     <h2>3030.HK 盘口<span class="hint">HKD · 阴影为买卖价差区间 · 仅港股交易时段，午休与收市断开</span></h2><div class="panel" id="c3"></div>
     <h2>基差统计<span class="hint">样本 ${D.n_slots} 点 · ${D.full_res?'15 秒':'5 分钟'}分辨率</span></h2><div id="tb"></div>`;
 
   _tipClosers=[];                     // 图表已重建，旧的关闭器失效
+  const isLong=!D.full_res;   // c0 也要用，须早于它定义
+
+  // 绝对价格图：P_i = pyth × (1 + d_i/1e4)，由已有数据反算，不额外传输
+  if(D.pyth){
+    const abs=[{name:'Pyth',c:'#7a5cc4',v:D.pyth,w:2.1}];
+    for(const key in (D.d||{})){
+      if(key==='implied_3030_usd_oz')continue;          // 下面单独用绝对值序列
+      const m=lab[key]||[key,'#888'];
+      abs.push({name:m[0],c:m[1],v:D.d[key].map((x,i)=>
+        (x==null||D.pyth[i]==null)?null:+(D.pyth[i]*(1+x/1e4)).toFixed(2))});
+    }
+    if(D.implied_3030)abs.push({name:'3030.HK 隐含',c:'#5aab6b',v:D.implied_3030,w:2.4});
+    const h0=ST.hidden.c0||{}; abs.forEach(L=>{L.hidden=!!h0[L.name]});
+    drawChart(document.getElementById('c0'),{id:'c0',t:D.t,lines:abs,h:innerWidth<480?210:280,
+      dec:1,tdec:2,unit:'',long:isLong,open:D.hk_open,ml:innerWidth<480?48:66});
+  }
+
   const src=D[B]||{}, lines=[];
   for(const key in src){const m=lab[key]||[key,'#888'];
     lines.push({name:m[0],c:m[1],v:src[key]})}
-  const isLong=!D.full_res;
   const hid=ST.hidden.c1||{}; lines.forEach(L=>{L.hidden=!!hid[L.name]});
   drawChart(document.getElementById('c1'),{id:'c1',t:D.t,lines,zero:true,h:300,dec:1,tdec:1,
     unit:'',long:isLong,open:D.hk_open});
