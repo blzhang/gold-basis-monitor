@@ -107,7 +107,13 @@ footer ol{padding-left:20px;margin:6px 0}footer li{margin:3px 0}
       <b>该校准会抹掉系统性溢价/折价</b>，只保留相对偏离；但<b>不影响波动率</b>，而波动率才是对冲误差。</li>
     <li>分层采样：Pyth 与 Binance 15 秒、Chainlink 60 秒（其 heartbeat 为小时级）、USD/HKD 15 分钟（日频源）。
       慢变量在图上做前向填充，Chainlink 陈旧度按链上 updatedAt 重算，因此锯齿是真实的。</li>
-    <li>3030 最小变动 0.005 HKD ≈ <b>7.1 bps</b>，价格分辨率与观测目标同量级。</li>
+    <li>3030 最小变动 0.005 HKD ≈ <b>7.1 bps</b>（mid 取买卖中价，粒度减半 ≈ <b>3.6 bps</b>），
+      价格分辨率与观测目标同量级。</li>
+    <li><b>为什么 3030 基准下曲线是方波：</b>偏离 = 源价 ÷ 3030隐含金价 − 1，分母每跳一档，
+      所有曲线同步跳一档。Chainlink 在两次链上更新之间价格是常数，此时红线的起伏
+      <b>完全是 3030 的倒影</b>，与 Chainlink 本身无关——它真正动的时刻，是下方陈旧度图垂直归零的那一瞬。
+      实测同一时段：相对 3030 抖动 1.2–1.5 bps，相对 Pyth 仅 0.5–1.0 bps，差额即量化噪声。
+      要看某个源自身动了多少，请切到 <b>Pyth 基准</b>。</li>
   </ol>
 </footer>
 </div>
@@ -288,8 +294,8 @@ function render(){
       isB?{t:'基准'}:{t:sgn(L.d_implied_3030_usd_oz)+(L.d_implied_3030_usd_oz??0)+' bps',c:cls(L.d_implied_3030_usd_oz)});
 
   const title=isB?'各源相对 <b>3030.HK</b> 的基差':'各源相对 <b>Pyth</b> 的偏离';
-  const hint=(isB?'bps · 底层资产视角，这是用 perp 对冲的真实净敞口'
-                 :'bps · 现货金市场视角，看谁跟得最紧')+' · 灰带为港股非交易时段';
+  const hint=(isB?'bps · 底层资产视角，用 perp 对冲的账面净敞口 · <b>曲线上的方波台阶来自 3030 自身 3.6bps 的最小变动，不是各源在跳</b>'
+                 :'bps · 现货金市场视角，分母连续，反映各源自身的偏离')+' · 灰带为港股非交易时段';
   app.innerHTML=`<div class="cards">${c}</div>
     <h2>${title}<span class="hint">${hint}</span></h2><div class="panel" id="c1"></div>
     <h2>Chainlink 报价陈旧度<span class="hint">分钟 · 锯齿峰值 = 锚它做报价的套利打击面</span></h2><div class="panel" id="c2"></div>
