@@ -152,6 +152,20 @@ function drawChart(host,cfg){
   const X=i=>ML+(n<2?iw/2:(t[i]-t0)/span*iw), Y=v=>MT+ih-(v-lo)/(hi-lo)*ih;
 
   let g='',NT=narrow?4:5;
+  // 非交易时段灰带：3030 盘口在午休/收市是僵尸报价已被过滤，曲线断开是预期而非故障
+  if(cfg.open&&cfg.open.length===n){
+    let s0=null;
+    for(let i=0;i<n;i++){
+      const shut=cfg.open[i]===false;
+      if(shut&&s0===null)s0=i;
+      if((!shut||i===n-1)&&s0!==null){
+        const x1=X(s0),x2=X(shut?i:i-1);
+        if(x2>x1+0.5)g+=`<rect x="${x1}" y="${MT}" width="${x2-x1}" height="${ih}" `
+          +`fill="var(--dim)" opacity=".085"/>`;
+        s0=null;
+      }
+    }
+  }
   for(let i=0;i<=NT;i++){const v=lo+(hi-lo)*i/NT,y=Y(v);
     g+=`<line x1="${ML}" y1="${y}" x2="${W-MR}" y2="${y}" stroke="var(--grid)"/>`
       +`<text x="${ML-5}" y="${y+3.5}" text-anchor="end" font-size="${FS}" fill="var(--dim)">${v.toFixed(cfg.dec??0)}</text>`}
@@ -274,8 +288,8 @@ function render(){
       isB?{t:'基准'}:{t:sgn(L.d_implied_3030_usd_oz)+(L.d_implied_3030_usd_oz??0)+' bps',c:cls(L.d_implied_3030_usd_oz)});
 
   const title=isB?'各源相对 <b>3030.HK</b> 的基差':'各源相对 <b>Pyth</b> 的偏离';
-  const hint=isB?'bps · 底层资产视角，这是用 perp 对冲的真实净敞口'
-                :'bps · 现货金市场视角，看谁跟得最紧';
+  const hint=(isB?'bps · 底层资产视角，这是用 perp 对冲的真实净敞口'
+                 :'bps · 现货金市场视角，看谁跟得最紧')+' · 灰带为港股非交易时段';
   app.innerHTML=`<div class="cards">${c}</div>
     <h2>${title}<span class="hint">${hint}</span></h2><div class="panel" id="c1"></div>
     <h2>Chainlink 报价陈旧度<span class="hint">分钟 · 锯齿峰值 = 锚它做报价的套利打击面</span></h2><div class="panel" id="c2"></div>
@@ -288,13 +302,15 @@ function render(){
     lines.push({name:m[0],c:m[1],v:src[key]})}
   const isLong=!D.full_res;
   const hid=ST.hidden.c1||{}; lines.forEach(L=>{L.hidden=!!hid[L.name]});
-  drawChart(document.getElementById('c1'),{id:'c1',t:D.t,lines,zero:true,h:300,dec:1,tdec:1,unit:'',long:isLong});
+  drawChart(document.getElementById('c1'),{id:'c1',t:D.t,lines,zero:true,h:300,dec:1,tdec:1,
+    unit:'',long:isLong,open:D.hk_open});
 
   if(D.cl_age)drawChart(document.getElementById('c2'),
     {t:D.t,lines:[{name:'陈旧',c:'#e0533d',v:D.cl_age.map(v=>v==null?null:+(v/60).toFixed(1))}],
      h:180,legend:false,dec:0,tdec:1,unit:' 分',min0:true,long:isLong});
 
-  if(D.bid_3030)drawChart(document.getElementById('c3'),{t:D.t,h:230,dec:3,tdec:4,long:isLong,lines:[
+  if(D.bid_3030)drawChart(document.getElementById('c3'),{t:D.t,h:230,dec:3,tdec:4,long:isLong,
+    open:D.hk_open,lines:[
     {name:'ask',c:'#e0533d',v:D.ask_3030,w:1.4,area:true},
     {name:'bid',c:'#4f9bd9',v:D.bid_3030,w:1.4},
     {name:'mid',c:'#b8860b',v:D.mid_3030,w:2.2}]});
@@ -318,10 +334,13 @@ async function fetchData(which){
 }
 async function tick(){
   // 卡片只需最新快照(约1KB)；完整序列 18KB/次，每 15 秒重传一天就是 100MB
-  const ok=await fetchData('latest');
-  if(ok)ST.at.ok=Date.now();
   const r=ST.range;
-  if(!ST[r]||Date.now()-(ST.at[r]||0)>60000){await fetchData(r); ST.at[r]=Date.now();}
+  const needSeries=!ST[r]||Date.now()-(ST.at[r]||0)>60000;
+  // 并行取，别串行等两个 RTT
+  const [ok,okS]=await Promise.all([fetchData('latest'),
+                                    needSeries?fetchData(r):Promise.resolve(true)]);
+  if(ok)ST.at.ok=Date.now();
+  if(needSeries&&okS)ST.at[r]=Date.now();
   if(!ST[r]&&!ok){document.getElementById('app').innerHTML='<div class="err">数据加载失败</div>';return}
   if(!ST[r])return;
   const l=document.getElementById('live'); l.classList.add('flash'); setTimeout(()=>l.classList.remove('flash'),260);
