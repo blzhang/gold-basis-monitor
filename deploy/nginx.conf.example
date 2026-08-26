@@ -1,0 +1,22 @@
+# 页面是纯静态文件，通常无需额外 nginx 配置：
+# 只要站点 root 下有 golddao/ 目录且 catch-all 是 try_files 即可。
+#
+# 若需独立配置：
+location ^~ /golddao/ {
+    root /var/www/YOUR_SITE;
+    try_files $uri $uri/ =404;
+
+    # data.json 每 15 秒变一次，别让它被缓存
+    location ~ ^/golddao/data.*\.json$ {
+        root /var/www/YOUR_SITE;
+        add_header Cache-Control "no-store" always;
+    }
+}
+
+# 可选：加访问控制（页面含盘口数据，默认对公网开放）
+# location ^~ /golddao/ {
+#     auth_basic "Gold Monitor";
+#     auth_basic_user_file /etc/nginx/htpasswd.golddao;
+#     root /var/www/YOUR_SITE;
+#     try_files $uri $uri/ =404;
+# }

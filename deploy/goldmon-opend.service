@@ -1,0 +1,17 @@
+[Unit]
+Description=Futu OpenD quote gateway (gold monitor)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/goldmon/opend/FutuOpenD
+ExecStart=/opt/goldmon/opend/FutuOpenD/FutuOpenD -console=1 -no_monitor=1 \
+  -login_account=YOUR_FUTU_ACCOUNT -login_by_remember=1 -login_region=hk
+Restart=always
+RestartSec=20
+StandardOutput=append:/opt/goldmon/opend/logs/opend.out.log
+StandardError=append:/opt/goldmon/opend/logs/opend.err.log
+
+[Install]
+WantedBy=multi-user.target

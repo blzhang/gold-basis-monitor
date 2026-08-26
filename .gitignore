@@ -1,0 +1,21 @@
+# 采集数据与日志 —— 绝不入库
+data/
+*.db
+*.db-wal
+*.db-shm
+*.log
+
+# 导出的实时数据（由 exporter 生成）
+web/data.json
+web/data_long.json
+
+# 富途 OpenD 二进制与配置（含凭证）
+opend/
+FutuOpenD.xml
+!deploy/FutuOpenD.xml.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/

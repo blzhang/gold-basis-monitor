@@ -1,0 +1,17 @@
+[Unit]
+Description=Gold monitor web exporter (daemon)
+After=goldmon-collector.service
+
+[Service]
+Type=simple
+Environment=HOME=/root
+Environment=GOLDMON_DB=/opt/goldmon/data/goldmon.db
+Environment=GOLDMON_WEB=/var/www/YOUR_SITE/golddao
+ExecStart=/opt/goldmon/venv/bin/python /opt/goldmon/collector/export_web.py --daemon --every=15
+Restart=always
+RestartSec=10
+StandardOutput=append:/opt/goldmon/data/export.log
+StandardError=append:/opt/goldmon/data/export.log
+
+[Install]
+WantedBy=multi-user.target

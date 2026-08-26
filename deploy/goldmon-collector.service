@@ -1,0 +1,20 @@
+[Unit]
+Description=Gold basis monitor collector
+After=network-online.target goldmon-opend.service
+Wants=network-online.target
+Requires=goldmon-opend.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/goldmon/collector
+Environment=GOLDMON_DB=/opt/goldmon/data/goldmon.db
+# futu-api 需要 HOME 定位日志目录，systemd 默认不传
+Environment=HOME=/root
+ExecStart=/opt/goldmon/venv/bin/python /opt/goldmon/collector/collect.py
+Restart=always
+RestartSec=15
+StandardOutput=append:/opt/goldmon/data/collector.log
+StandardError=append:/opt/goldmon/data/collector.log
+
+[Install]
+WantedBy=multi-user.target

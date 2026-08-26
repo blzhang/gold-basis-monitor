@@ -1,0 +1,4 @@
+# 采集器只用标准库（urllib/sqlite3/json），故此处仅列分析与富途依赖
+pandas>=2.0
+numpy>=1.24
+futu-api>=9.0        # 仅 3030.HK 盘口需要；不采港股可省略

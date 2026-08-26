@@ -1,0 +1,21 @@
+<futu_opend>
+	<!-- 仅监听本机：采集器与 OpenD 同机部署 -->
+	<ip>127.0.0.1</ip>
+	<api_port>11111</api_port>
+
+	<!-- 你的富途账号（用户ID / 手机号 / 邮箱） -->
+	<login_account>YOUR_FUTU_ACCOUNT</login_account>
+	<!-- 密码不写在这里。用 -remember=1 手工登录一次，之后 systemd 走 -login_by_remember=1 -->
+
+	<lang>chs</lang>
+	<log_level>info</log_level>
+	<log_path>/opt/goldmon/opend/logs</log_path>
+	<push_proto_type>0</push_proto_type>
+
+	<telnet_ip>127.0.0.1</telnet_ip>
+	<telnet_port>22222</telnet_port>
+
+	<price_reminder_push>0</price_reminder_push>
+	<auto_hold_quote_right>1</auto_hold_quote_right>
+	<future_trade_api_time_zone>UTC+8</future_trade_api_time_zone>
+</futu_opend>
