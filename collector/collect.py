@@ -20,8 +20,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sources as S
 
-_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB_PATH = os.environ.get("GOLDMON_DB", os.path.join(_REPO, "data", "goldmon.db"))
+DB_PATH = os.environ.get("GOLDMON_DB", "/opt/goldmon/data/goldmon.db")
 SLOT_SEC = 15           # 主采样周期
 ROUND_BUDGET = 12       # 单轮采集超时预算（秒）
 RETAIN_DAYS = 90        # 数据保留天数：15 秒采样每天约 7.5 万行，无上限会持续吃盘
@@ -32,6 +31,7 @@ CODE = "HK.03030"
 # every = 每隔几轮采一次
 TIERS = [
     (S.fetch_pyth,          1),   # 15s  基准源，要跟得最紧
+    (S.fetch_goldapi,       1),   # 15s  基准备用源（Pyth 端点可能 401）
     (S.fetch_binance_spot,  1),   # 15s
     (S.fetch_binance_perp,  1),   # 15s
     (S.fetch_chainlink,     4),   # 60s  小时级更新，够定位它何时跳
@@ -51,9 +51,6 @@ def log(msg: str) -> None:
 # ------------------------------------------------------------------ DB
 
 def connect(path: str = DB_PATH) -> sqlite3.Connection:
-    d = os.path.dirname(os.path.abspath(path))
-    if d:
-        os.makedirs(d, exist_ok=True)   # 首次运行时 data/ 尚不存在
     conn = sqlite3.connect(path, timeout=30, check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL")     # 允许 push 线程与主线程并发写
     conn.execute("PRAGMA synchronous=NORMAL")

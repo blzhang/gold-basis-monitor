@@ -144,7 +144,13 @@ let _rz;addEventListener('resize',()=>{clearTimeout(_rz);
 /* ---------- 通用折线图（含 hover 十字线与 tooltip） ---------- */
 function drawChart(host,cfg){
   // viewBox 宽度取容器实际 CSS 宽度：若固定 1000 宽再缩放，手机上 10.5px 字会变成 3.6px
-  const CW=Math.max(260,(host.clientWidth||360)-8), narrow=CW<480;
+  // 容器宽度为 0 说明布局尚未完成（后台标签/首帧）。此时不要用兜底宽度硬画，
+  // 否则 viewBox 会被定成 260 再被拉伸，字和线全部放大失真。等下一帧重试。
+  if(!host.clientWidth){
+    if(!host._pend){host._pend=1; requestAnimationFrame(()=>{host._pend=0; drawChart(host,cfg);});}
+    return;
+  }
+  const CW=Math.max(260,host.clientWidth-8), narrow=CW<480;
   const W=CW,H=cfg.h||(narrow?190:270);
   const ML=cfg.ml||(narrow?38:56),MR=narrow?10:16,MT=12,MB=narrow?22:28;
   const FS=narrow?10:10.5;
@@ -290,7 +296,9 @@ function render(){
   const bps=(v,extra)=>(v==null||!isFinite(v))?{t:(extra||'—')}
                        :{t:sgn(v)+v+' bps'+(extra?' · '+extra:''),c:cls(v)};
 
-  let c=card('Pyth XAU/USD','$'+(L.pyth_xauusd??0).toFixed(2),
+  const baseAlt=!!L.base_alt;
+  const baseLabel=baseAlt?'现货金价 · 备用源':'Pyth XAU/USD';
+  let c=card(baseLabel,'$'+(L.pyth_xauusd??0).toFixed(2),
       useB?bps(L.b_pyth_xauusd&&L.b_pyth_xauusd,'vs 3030'):{t:'基准 · 实时'});
   if(L.chainlink_xauusd!=null)
     c+=card('Chainlink','$'+L.chainlink_xauusd.toFixed(2),
@@ -311,9 +319,11 @@ function render(){
   const title=isB?'各源相对 <b>3030.HK</b> 的基差':'各源相对 <b>Pyth</b> 的偏离';
   const hint=(isB?'bps · 底层资产视角，用 perp 对冲的账面净敞口 · <b>曲线上的方波台阶来自 3030 自身 3.6bps 的最小变动，不是各源在跳</b>'
                  :'bps · 现货金市场视角，分母连续，反映各源自身的偏离')+' · 灰带为港股非交易时段';
+  const srcNote=baseAlt
+    ?`<p class="note" style="margin:8px 2px 0;color:var(--pos)">⚠ Pyth 公共端点返回 401，基准已自动切换到备用现货源 gold-api.com（两者历史差约 2bps）。切换点前后的绝对水平有微小台阶，波动率结论不受影响。</p>`:'';
   const fallbackNote=(isB&&!has3030)
     ?`<p class="note" style="margin:8px 2px 0">港股休市，3030 无实时盘口：<b>上方卡片暂按 Pyth 基准显示</b>；下方图表中 3030 相关曲线在休市段断开。</p>`:'';
-  app.innerHTML=`<div class="cards">${c}</div>${fallbackNote}
+  app.innerHTML=`<div class="cards">${c}</div>${srcNote}${fallbackNote}
     <h2>各源金价绝对水平<span class="hint">USD/oz · 所有源同步跟随金价，曲线之间的垂直距离就是基差</span></h2><div class="panel" id="c0"></div>
     <h2>${title}<span class="hint">${hint}</span></h2><div class="panel" id="c1"></div>
     <h2>报价陈旧度对比<span class="hint">分钟 · 距上次报价变动多久 · 锯齿峰值 = 锚它做报价的套利打击面</span></h2><div class="panel" id="c2"></div>
@@ -324,13 +334,13 @@ function render(){
   const isLong=!D.full_res;   // c0 也要用，须早于它定义
 
   // 绝对价格图：P_i = pyth × (1 + d_i/1e4)，由已有数据反算，不额外传输
-  if(D.pyth){
-    const abs=[{name:'Pyth',c:'#7a5cc4',v:D.pyth,w:2.1}];
-    for(const key in (D.d||{})){
-      if(key==='implied_3030_usd_oz')continue;          // 下面单独用绝对值序列
+  if(D.pyth||D.abs){
+    const abs=[];
+    if(D.pyth)abs.push({name:'现货金价',c:'#7a5cc4',v:D.pyth,w:2.1});
+    // 直接用各源绝对价，基准缺失时这张图仍然可读
+    for(const key in (D.abs||{})){
       const m=lab[key]||[key,'#888'];
-      abs.push({name:m[0],c:m[1],v:D.d[key].map((x,i)=>
-        (x==null||D.pyth[i]==null)?null:+(D.pyth[i]*(1+x/1e4)).toFixed(2))});
+      abs.push({name:m[0],c:m[1],v:D.abs[key]});
     }
     if(D.implied_3030)abs.push({name:'3030.HK 隐含',c:'#5aab6b',v:D.implied_3030,w:2.4});
     const h0=ST.hidden.c0||{}; abs.forEach(L=>{L.hidden=!!h0[L.name]});

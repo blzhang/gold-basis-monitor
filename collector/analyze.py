@@ -22,6 +22,8 @@ import pandas as pd
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.environ.get("GOLDMON_DB", os.path.join(_REPO, "data", "goldmon.db"))
 BASE = "pyth_xauusd"
+BASE_ALT = "goldapi_xauusd"   # Pyth 公共端点 401 时的备用基准，实测与 Pyth 差约 2bps
+BASE_PX = "_base_px"          # 实际用作分母的序列（Pyth 优先，缺失则回退）
 HKT = "Asia/Hong_Kong"
 
 # 参与横向对比的源
@@ -104,6 +106,16 @@ def derive(w: pd.DataFrame, k_fixed: float | None = None) -> tuple[pd.DataFrame,
         # clip(0)：slot_ts 是对齐值，链上更新可能落在 slot 之后导致负值，陈旧度无负数语义
         w["chainlink_xauusd__age"] = (now_s - w["chainlink_xauusd__srcts"]).clip(lower=0)
 
+    # 基准分母：Pyth 优先，缺失时回退到备用源。
+    # 不这样做的话，基准源一挂全部 d_*/b_* 变 NaN，页面直接白屏。
+    base = w[BASE].copy() if BASE in w.columns else pd.Series(np.nan, index=w.index)
+    if BASE_ALT in w.columns:
+        base = base.fillna(w[BASE_ALT])
+    # 只容忍 2 分钟内的短暂抖动。无限 ffill 会把一个已停更数小时的基准
+    # 当成有效价格，让所有 d_*/b_* 变成相对冻结分母的假数据。
+    w[BASE_PX] = base.ffill(limit=8)
+    w["base_is_alt"] = (w[BASE].isna() if BASE in w.columns else True) & w[BASE_PX].notna()
+
     def mid(a: str, b: str, out: str):
         if a in w.columns and b in w.columns:
             w[out] = (w[a] + w[b]) / 2
@@ -132,9 +144,9 @@ def derive(w: pd.DataFrame, k_fixed: float | None = None) -> tuple[pd.DataFrame,
         w["spread_3030_bps"] = (w.futu_3030_ask - w.futu_3030_bid) / w.mid_3030_hkd * 1e4
 
     k = k_fixed
-    if {"mid_3030_hkd", "fx_usdhkd", BASE} <= set(w.columns):
+    if {"mid_3030_hkd", "fx_usdhkd", BASE_PX} <= set(w.columns):
         if k is None:
-            ratio = w.mid_3030_hkd / w.fx_usdhkd / w[BASE]
+            ratio = w.mid_3030_hkd / w.fx_usdhkd / w[BASE_PX]
             ratio = ratio.replace([np.inf, -np.inf], np.nan).dropna()
             if len(ratio):
                 k = float(ratio.median())
@@ -150,17 +162,18 @@ def derive(w: pd.DataFrame, k_fixed: float | None = None) -> tuple[pd.DataFrame,
         changed = m.ne(m.shift()) & m.notna()
         w["mid_3030_age"] = (_now - _now.where(changed).ffill()).where(m.notna())
 
-    if BASE in w.columns:
+    if BASE_PX in w.columns:
         for c in CRYPTO + ["implied_3030_usd_oz"]:
             if c in w.columns:
-                w[f"d_{c}"] = (w[c] / w[BASE] - 1) * 1e4
+                w[f"d_{c}"] = (w[c] / w[BASE_PX] - 1) * 1e4
 
     # 以 3030 为基准 —— 项目底层资产就是它，用 perp 对冲时的真实净敞口是 b_*，不是 d_*。
     # k 的校准只改变 b_* 的水平，不影响其波动率，而波动率才是对冲误差。
     if "implied_3030_usd_oz" in w.columns:
-        for c in CRYPTO + [BASE]:
+        for c in CRYPTO + [BASE_PX]:
             if c in w.columns:
-                w[f"b_{c}"] = (w[c] / w["implied_3030_usd_oz"] - 1) * 1e4
+                key = BASE if c == BASE_PX else c
+                w[f"b_{key}"] = (w[c] / w["implied_3030_usd_oz"] - 1) * 1e4
     return w, k
 
 

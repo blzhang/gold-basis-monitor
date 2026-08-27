@@ -25,6 +25,7 @@ RECENT_H = 8        # 全分辨率窗口（小时）
 LONG_D = 14         # 长周期窗口（天）
 LONG_RULE = "5min"  # 长周期降采样粒度
 BASE = A.BASE
+BASE_PX = A.BASE_PX
 
 # (列后缀, 图例, 颜色) —— d_ 相对 Pyth，b_ 相对 3030
 SERIES = [
@@ -55,6 +56,14 @@ def build(w: pd.DataFrame, k, ticks: pd.DataFrame, full: bool) -> dict:
         "t": [int(x.timestamp()) for x in w.index],
         "d": {}, "b": {}, "labels": {},
     }
+    # 各源绝对价直接输出，不让绝对价格图依赖基准：
+    # 基准源故障时其余源数据仍然有效，图不该跟着一起空掉。
+    d["abs"] = {}
+    for col, lab, c in SERIES:
+        if col in w.columns and w[col].notna().any():
+            d["abs"][col] = clean(w[col], 2)
+            d["labels"].setdefault(col, [lab, c])
+
     for col, lab, c in SERIES + D_EXTRA:
         if f"d_{col}" in w.columns:
             d["d"][col] = clean(w[f"d_{col}"], 2)
@@ -68,7 +77,7 @@ def build(w: pd.DataFrame, k, ticks: pd.DataFrame, full: bool) -> dict:
         d["hk_open"] = [bool(x) if x == x else None for x in w["hk_open"]]
 
     for col, key, nd in [
-        (BASE, "pyth", 2), ("chainlink_xauusd__age", "cl_age", 0),
+        (BASE_PX, "pyth", 2), ("chainlink_xauusd__age", "cl_age", 0),
         ("mid_3030_age", "hk_age", 0),
         ("mid_3030_hkd", "mid_3030", 4), ("futu_3030_bid", "bid_3030", 4),
         ("futu_3030_ask", "ask_3030", 4), ("spread_3030_bps", "spread_3030", 1),
@@ -79,7 +88,12 @@ def build(w: pd.DataFrame, k, ticks: pd.DataFrame, full: bool) -> dict:
 
     last = w.iloc[-1]
     latest = {"ts": int(w.index[-1].timestamp())}
-    for col in [BASE, "chainlink_xauusd", "binance_paxg_spot_mid", "binance_paxg_perp_mark",
+    # 基准来源标记：Pyth 端点故障时页面要能说明当前用的是备用源
+    if "base_is_alt" in w.columns:
+        latest["base_alt"] = bool(last.get("base_is_alt"))
+    if BASE_PX in w.columns and pd.notna(last.get(BASE_PX)):
+        latest["pyth_xauusd"] = round(float(last[BASE_PX]), 4)
+    for col in ["chainlink_xauusd", "binance_paxg_spot_mid", "binance_paxg_perp_mark",
                 "binance_xaut_spot_mid", "binance_xaut_perp_mark", "mid_3030_hkd",
                 "spread_3030_bps", "fx_usdhkd", "implied_3030_usd_oz", "chainlink_xauusd__age",
                 "mid_3030_age"]:

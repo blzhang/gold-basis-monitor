@@ -4,6 +4,9 @@
 # 若需独立配置：
 location ^~ /golddao/ {
     root /var/www/YOUR_SITE;
+    # 页面与数据每 15 秒更新。不设此头时浏览器会启发式缓存 index.html，
+    # 用户（和你自己调试时）会长时间看到旧版 JS。
+    add_header Cache-Control "no-cache, must-revalidate" always;
     try_files $uri $uri/ =404;
 
     # data.json 每 15 秒变一次，别让它被缓存

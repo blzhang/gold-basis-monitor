@@ -233,4 +233,19 @@ def fetch_futu_3030(quote_ctx) -> list[Reading]:
         return [_err("futu_3030_bid", e)]
 
 
-ALL_HTTP_FETCHERS = [fetch_pyth, fetch_chainlink, fetch_binance_spot, fetch_binance_perp, fetch_fx]
+def fetch_goldapi() -> list[Reading]:
+    """备用现货金价源。
+
+    2026-08-27 起 Pyth 公共 Hermes 端点（含 beta / benchmarks）统一返回 401，
+    基准源单点故障会让全部 d_* / b_* 无法计算。此源实测与 Pyth 差约 2 bps。
+    """
+    try:
+        d = _get_json("https://api.gold-api.com/price/XAU")
+        return [Reading(source="goldapi_xauusd", value=float(d["price"]), ccy=USD_OZ,
+                        source_ts=None, meta={"provider": "gold-api.com"})]
+    except Exception as e:
+        return [_err("goldapi_xauusd", e)]
+
+
+ALL_HTTP_FETCHERS = [fetch_pyth, fetch_goldapi, fetch_chainlink,
+                     fetch_binance_spot, fetch_binance_perp, fetch_fx]
