@@ -10,6 +10,8 @@ WorkingDirectory=/opt/goldmon/collector
 Environment=GOLDMON_DB=/opt/goldmon/data/goldmon.db
 # futu-api 需要 HOME 定位日志目录，systemd 默认不传
 Environment=HOME=/root
+# Pyth API Key（600 权限，见 pyth.env.example）。缺失时采集器会自动降级到备用基准源。
+EnvironmentFile=-/etc/goldmon/pyth.env
 ExecStart=/opt/goldmon/venv/bin/python /opt/goldmon/collector/collect.py
 Restart=always
 RestartSec=15

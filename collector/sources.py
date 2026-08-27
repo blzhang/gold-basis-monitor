@@ -10,6 +10,7 @@ raw_value / raw_ccy / source_ts 原样入库，口径换算全部留给分析层
 from __future__ import annotations
 
 import json
+import os
 import time
 import urllib.request
 from dataclasses import dataclass, field
@@ -17,6 +18,11 @@ from typing import Any
 
 HTTP_TIMEOUT = 12
 UA = "Mozilla/5.0 (X11; Linux x86_64)"
+
+# Pyth Core 于 2026-08-26 16:00 UTC 升级后，Hermes 强制要求认证（此前匿名可用）。
+# 认证方式为 Authorization: Bearer <key>（x-api-key / query 参数均返回 401）。
+# key 从环境变量注入，由 systemd 的 EnvironmentFile(600) 提供，不入代码与版本库。
+PYTH_API_KEY = os.environ.get("PYTH_API_KEY", "")
 
 # Pyth XAU/USD feed id
 PYTH_XAU_FEED = "765d2ba906dbc32ca17cc11f5310a89e9ee1f6420508c63861f2f8ba4ee34bb2"
@@ -47,8 +53,11 @@ class Reading:
     error: str | None = None
 
 
-def _get_json(url: str, timeout: int = HTTP_TIMEOUT) -> Any:
-    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/json"})
+def _get_json(url: str, timeout: int = HTTP_TIMEOUT, extra_headers: dict | None = None) -> Any:
+    headers = {"User-Agent": UA, "Accept": "application/json"}
+    if extra_headers:
+        headers.update(extra_headers)
+    req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read())
 
@@ -75,7 +84,8 @@ def fetch_pyth() -> list[Reading]:
             "https://hermes.pyth.network/v2/updates/price/latest"
             f"?ids[]={PYTH_XAU_FEED}&parsed=true&encoding=hex"
         )
-        d = _get_json(url)
+        auth = {"Authorization": f"Bearer {PYTH_API_KEY}"} if PYTH_API_KEY else None
+        d = _get_json(url, extra_headers=auth)
         p = d["parsed"][0]["price"]
         expo = int(p["expo"])
         price = int(p["price"]) * (10 ** expo)

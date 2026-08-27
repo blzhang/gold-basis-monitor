@@ -9,6 +9,11 @@ data/
 web/data.json
 web/data_long.json
 
+# 凭证文件 —— 绝不入库
+*.env
+!*.env.example
+pyth.env
+
 # 富途 OpenD 二进制与配置（含凭证）
 opend/
 FutuOpenD.xml
